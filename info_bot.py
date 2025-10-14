@@ -2,7 +2,7 @@
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                                                               #
 #        ሁለገብ የቴሌግራም መረጃ አግኚ ቦት (Info Bot)               #
-#                 V.3 - በተሻሻለ የስካም ትንተና                     #
+#                 V.4 - ለ Vercel ሙሉ በሙሉ የተስተካከለ             #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 import logging
 import os
@@ -47,9 +47,8 @@ def estimate_account_age(user_id: int) -> str:
 async def analyze_scam_potential(user: 'User', bot_instance: Bot, user_id: int) -> str:
     """የማጭበርበር ስጋትን በበለጠ ዝርዝር ይመረምራል"""
     warnings = []
-    score = 0  # የስጋት ነጥብ መስጫ
+    score = 0
 
-    # 1. ፕሮፋይል ፎቶ መኖሩን ማረጋገጥ
     try:
         profile_photos = await bot_instance.get_user_profile_photos(user_id, limit=1)
         if profile_photos.total_count == 0:
@@ -58,18 +57,15 @@ async def analyze_scam_potential(user: 'User', bot_instance: Bot, user_id: int) 
     except Exception as e:
         logger.warning(f"Could not fetch profile photos for {user_id}: {e}")
 
-    # 2. Username መኖሩን ማረጋገጥ
     if not user.username:
         warnings.append("• ✍️ Username አልተቀመጠለትም።")
         score += 1
 
-    # 3. ባዮ (Bio) እና ስም መተንተን
     try:
         full_user = await bot_instance.get_chat(user_id)
         bio = full_user.bio
         full_name = full_user.full_name.lower()
         
-        # 3a. የባዮ ትንተና
         if not bio:
             warnings.append("• 📝 ባዮ (Bio) አልተጻፈም።")
             score += 1
@@ -79,9 +75,8 @@ async def analyze_scam_potential(user: 'User', bot_instance: Bot, user_id: int) 
                 if keyword in bio.lower():
                     warnings.append(f"• ☣️ ባዮ '{keyword}' የሚል አጠራጣሪ ቃል ይዟል።")
                     score += 3
-                    break  # አንድ ጊዜ መገኘቱ በቂ ነው
+                    break
 
-        # 3b. የስም ትንተና
         suspicious_name_keywords = ['admin', 'support', 'telegram', 'premium', 'service', 'account']
         for keyword in suspicious_name_keywords:
             if keyword in full_name:
@@ -90,7 +85,6 @@ async def analyze_scam_potential(user: 'User', bot_instance: Bot, user_id: int) 
     except Exception as e:
         logger.warning(f"Could not fetch full user profile for {user_id}: {e}")
 
-    # 4. ማጠቃለያ መስጠት
     if not warnings:
         return "✅ **የደህንነት ትንታኔ:**\nምንም ቀጥተኛ አጠራጣሪ ነገር አልተገኘም።"
     
@@ -159,23 +153,27 @@ async def forward_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 # --------------------- ለ Vercel የተስተካከለው ክፍል ---------------------
 
-async def main_async():
+@app.route("/", methods=["POST"])
+async def process_update():
+    """ቴሌግራም webhook ሲልክ ይህ ተግባር ይፈጸማል"""
+    
+    # የቦቱን አፕሊኬሽን መገንባት
     ptb_app = Application.builder().token(TOKEN).build()
+    
+    # ትዕዛዞችን መጨመር
     ptb_app.add_handler(CommandHandler("start", start_command))
     ptb_app.add_handler(CommandHandler("id", id_command))
     ptb_app.add_handler(MessageHandler(filters.FORWARDED, forward_handler))
-    return ptb_app
 
-ptb_application = asyncio.run(main_async())
-
-@app.route("/", methods=["POST"])
-async def process_update():
+    # ከቴሌግራም የመጣውን ዳታ ማስተናገድ
     update_data = request.get_json(force=True)
-    update = Update.de_json(update_data, ptb_application.bot)
-    async with ptb_application:
-        await ptb_application.initialize()
-        await ptb_application.process_update(update)
-        await ptb_application.shutdown()
+    update = Update.de_json(update_data, ptb_app.bot)
+    
+    async with ptb_app:
+        await ptb_app.initialize()
+        await ptb_app.process_update(update)
+        await ptb_app.shutdown()
+    
     return "OK", 200
 
 if __name__ == "__main__":
