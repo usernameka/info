@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                                                               #
-#        ለ Vercel የተስተካከለ ሁለገብ መረጃ አግኚ ቦት (Info Bot)      #
-#                 V.2 - Initialization ስህተት የተስተካከለበት          #
+#        ሁለገብ የቴሌግራም መረጃ አግኚ ቦት (Info Bot)               #
+#                 V.3 - በተሻሻለ የስካም ትንተና                     #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 import logging
 import os
@@ -42,31 +42,67 @@ def estimate_account_age(user_id: int) -> str:
             year_created = year
         else:
             break
-    return f"📅 በግምት በ {year_created} ወይም ከዚያ በኋላ የተከፈተ።"
+    return f"📅 **የተከፈተበት ጊዜ:** በግምት በ {year_created} ወይም ከዚያ በኋላ።"
 
 async def analyze_scam_potential(user: 'User', bot_instance: Bot, user_id: int) -> str:
-    """የማጭበርበር ስጋትን ይመረምራል"""
+    """የማጭበርበር ስጋትን በበለጠ ዝርዝር ይመረምራል"""
     warnings = []
+    score = 0  # የስጋት ነጥብ መስጫ
+
+    # 1. ፕሮፋይል ፎቶ መኖሩን ማረጋገጥ
     try:
         profile_photos = await bot_instance.get_user_profile_photos(user_id, limit=1)
         if profile_photos.total_count == 0:
             warnings.append("• 🖼️ ፕሮፋይል ፎቶ የለውም።")
+            score += 2
     except Exception as e:
         logger.warning(f"Could not fetch profile photos for {user_id}: {e}")
 
+    # 2. Username መኖሩን ማረጋገጥ
     if not user.username:
         warnings.append("• ✍️ Username አልተቀመጠለትም።")
+        score += 1
 
-    suspicious_keywords = ['admin', 'support', 'telegram', 'premium', 'service']
-    full_name = (user.first_name + " " + (user.last_name or "")).lower()
-    for keyword in suspicious_keywords:
-        if keyword in full_name:
-            warnings.append(f"• 📛 ስሙ '{keyword.capitalize()}' የሚል አጠራጣሪ ቃል ይዟል።")
+    # 3. ባዮ (Bio) እና ስም መተንተን
+    try:
+        full_user = await bot_instance.get_chat(user_id)
+        bio = full_user.bio
+        full_name = full_user.full_name.lower()
+        
+        # 3a. የባዮ ትንተና
+        if not bio:
+            warnings.append("• 📝 ባዮ (Bio) አልተጻፈም።")
+            score += 1
+        else:
+            suspicious_bio_keywords = ['crypto', 'investment', 'forex', 'manager', 'guaranteed profit', 'investor', 'cashapp']
+            for keyword in suspicious_bio_keywords:
+                if keyword in bio.lower():
+                    warnings.append(f"• ☣️ ባዮ '{keyword}' የሚል አጠራጣሪ ቃል ይዟል።")
+                    score += 3
+                    break  # አንድ ጊዜ መገኘቱ በቂ ነው
 
+        # 3b. የስም ትንተና
+        suspicious_name_keywords = ['admin', 'support', 'telegram', 'premium', 'service', 'account']
+        for keyword in suspicious_name_keywords:
+            if keyword in full_name:
+                warnings.append(f"• 📛 ስሙ '{keyword.capitalize()}' የሚል አጠራጣሪ ቃል ይዟል።")
+                score += 3
+    except Exception as e:
+        logger.warning(f"Could not fetch full user profile for {user_id}: {e}")
+
+    # 4. ማጠቃለያ መስጠት
     if not warnings:
-        return "✅ ምንም አጠራጣሪ ነገር አልተገኘም።"
+        return "✅ **የደህንነት ትንታኔ:**\nምንም ቀጥተኛ አጠራጣሪ ነገር አልተገኘም።"
+    
+    summary = ""
+    if score >= 5:
+        summary = "🔴 **ከፍተኛ ጥንቃቄ ያድርጉ**"
+    elif score >= 3:
+        summary = "🟡 **መካከለኛ ጥንቃቄ ያድርጉ**"
     else:
-        return "⚠️ **የደህንነት ትንታኔ:**\n" + "\n".join(warnings)
+        summary = "🟢 **ዝቅተኛ ስጋት**"
+
+    return f"⚠️ **የደህንነት ትንታኔ:** {summary}\n\n" + "\n".join(warnings)
 
 # --------------------------- የቦት ትዕዛዝ እና ምላሾች ---------------------------
 
@@ -107,8 +143,9 @@ async def forward_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"👤 **የተጠቃሚ መረጃ**\n\n"
             f"**ስም:** {user.first_name} {user.last_name or ''}\n"
             f"**Username:** @{user.username if user.username else 'የለውም'}\n"
-            f"**User ID:** `{user.id}`\n\n---\n\n"
-            f"{age_estimation}\n\n---\n\n"
+            f"**User ID:** `{user.id}`\n\n"
+            f"{age_estimation}\n\n"
+            f"---\n\n"
             f"{scam_analysis}"
         )
         await message.reply_text(response, parse_mode=ParseMode.MARKDOWN_V2)
@@ -123,33 +160,23 @@ async def forward_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 # --------------------- ለ Vercel የተስተካከለው ክፍል ---------------------
 
 async def main_async():
-    """ይህ ተግባር አፕሊኬሽኑን ገንብቶ ለስራ ዝግጁ ያደርገዋል"""
     ptb_app = Application.builder().token(TOKEN).build()
-    
-    # ትዕዛዞችን መጨመር
     ptb_app.add_handler(CommandHandler("start", start_command))
     ptb_app.add_handler(CommandHandler("id", id_command))
     ptb_app.add_handler(MessageHandler(filters.FORWARDED, forward_handler))
-
     return ptb_app
 
-# አፕሊኬሽኑን አንድ ጊዜ ብቻ መጀመር
 ptb_application = asyncio.run(main_async())
 
 @app.route("/", methods=["POST"])
 async def process_update():
-    """ቴሌግራም webhook ሲልክ ይህ ተግባር ይፈጸማል"""
     update_data = request.get_json(force=True)
     update = Update.de_json(update_data, ptb_application.bot)
-    
-    # አፕሊኬሽኑን initialize አድርጎ መልዕክቱን ማስተናገድ
     async with ptb_application:
         await ptb_application.initialize()
         await ptb_application.process_update(update)
         await ptb_application.shutdown()
-    
     return "OK", 200
 
-# Vercel ላይ ይህ ክፍል አይሰራም፤ ለ Local Test ብቻ ነው።
 if __name__ == "__main__":
     app.run(debug=True)
