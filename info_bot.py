@@ -2,7 +2,7 @@
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                                                               #
 #        ሁለገብ የቴሌግራም መረጃ አግኚ ቦት (Info Bot)               #
-#                 V.5 - በተሻሻለ ሎጂክ እና አዲስ /info ትዕዛዝ      #
+#                 V.6 - የመጨረሻ የተረጋጋ እትም                     #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 import logging
 import os
@@ -24,9 +24,8 @@ TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN የሚባል Environment Variable አልተገኘም!")
 
-# Flask አፕሊኬሽኑን እና የቦት Instance መፍጠር
+# Flask አፕሊኬሽኑን መፍጠር
 app = Flask(__name__)
-bot = Bot(token=TOKEN)
 
 # --------------------------- ዋና ዋና ፊቸሮች ---------------------------
 
@@ -171,29 +170,27 @@ async def forward_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await message.reply_text(response, parse_mode=ParseMode.MARKDOWN_V2)
 
 # --------------------- ለ Vercel የተስተካከለው ክፍል ---------------------
+# የቦቱን አፕሊኬሽን አንድ ጊዜ ብቻ መገንባት
+ptb_app = Application.builder().token(TOKEN).build()
+ptb_app.add_handler(CommandHandler("start", start_command))
+ptb_app.add_handler(CommandHandler("id", id_command))
+ptb_app.add_handler(CommandHandler("info", info_command))
+ptb_app.add_handler(MessageHandler(filters.FORWARDED, forward_handler))
+
 
 @app.route("/", methods=["POST"])
 async def process_update():
     """ቴሌግራም webhook ሲልክ ይህ ተግባር ይፈጸማል"""
-    ptb_app = Application.builder().token(TOKEN).build()
-    
-    # ትዕዛዞችን መጨመር
-    ptb_app.add_handler(CommandHandler("start", start_command))
-    ptb_app.add_handler(CommandHandler("id", id_command))
-    ptb_app.add_handler(CommandHandler("info", info_command))
-    ptb_app.add_handler(MessageHandler(filters.FORWARDED, forward_handler))
-
     try:
         update_data = request.get_json(force=True)
-        update = Update.de_json(update_data, bot)
+        update = Update.de_json(update_data, ptb_app.bot)
         
+        # አፕሊኬሽኑን አስጀምሮ መልዕክቱን ማስተናገድ
         async with ptb_app:
-            await ptb_app.initialize()
             await ptb_app.process_update(update)
-            await ptb_app.shutdown()
             
     except Exception as e:
-        logger.error(f"An error occurred: {e}")
+        logger.error(f"An error occurred in process_update: {e}")
     
     return "OK", 200
 
