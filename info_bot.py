@@ -2,7 +2,7 @@
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                                                               #
 #        ሁለገብ የቴሌግራም መረጃ አግኚ ቦት (Info Bot)               #
-#                 V.4 - ለ Vercel ሙሉ በሙሉ የተስተካከለ             #
+#                 V.5 - በተሻሻለ ሎጂክ እና አዲስ /info ትዕዛዝ      #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 import logging
 import os
@@ -24,8 +24,9 @@ TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 if not TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN የሚባል Environment Variable አልተገኘም!")
 
-# Flask አፕሊኬሽኑን መፍጠር
+# Flask አፕሊኬሽኑን እና የቦት Instance መፍጠር
 app = Flask(__name__)
+bot = Bot(token=TOKEN)
 
 # --------------------------- ዋና ዋና ፊቸሮች ---------------------------
 
@@ -98,15 +99,35 @@ async def analyze_scam_potential(user: 'User', bot_instance: Bot, user_id: int) 
 
     return f"⚠️ **የደህንነት ትንታኔ:** {summary}\n\n" + "\n".join(warnings)
 
+
+async def get_user_full_info(user_to_check, bot_instance, reply_message):
+    """የተጠቃሚን ሙሉ መረጃ አቀናብሮ ይመልሳል"""
+    age_estimation = estimate_account_age(user_to_check.id)
+    scam_analysis = await analyze_scam_potential(user_to_check, bot_instance, user_to_check.id)
+    response = (
+        f"👤 **የተጠቃሚ መረጃ**\n\n"
+        f"**ስም:** {user_to_check.first_name} {user_to_check.last_name or ''}\n"
+        f"**Username:** @{user_to_check.username if user_to_check.username else 'የለውም'}\n"
+        f"**User ID:** `{user_to_check.id}`\n\n"
+        f"{age_estimation}\n\n"
+        f"---\n\n"
+        f"{scam_analysis}"
+    )
+    await reply_message.reply_text(response, parse_mode=ParseMode.MARKDOWN_V2)
+
 # --------------------------- የቦት ትዕዛዝ እና ምላሾች ---------------------------
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     welcome_message = (
         f"👋 ሰላም {user.mention_html()}!\n\n"
-        "እኔ ሁለገብ መረጃ አግኚ ቦት ነኝ። ስለማንኛውም የቴሌግራም ተጠቃሚ፣ ቻናል ወይም ግሩፕ መረጃ ማግኘት ከፈለጉ፣\n\n"
-        "1. ከአንድ ሰው ወይም ቻናል የተላከን መልዕክት ወደ እኔ `Forward` ያድርጉ።\n"
-        "2. `/id` የሚለውን ትዕዛዝ በመላክ የራስዎን ወይም የግሩፑን ID ያግኙ።"
+        "እኔ ሁለገብ መረጃ አግኚ ቦት ነኝ። መረጃ ለማግኘት ከሚከተሉት አንዱን ይጠቀሙ:\n\n"
+        "1️⃣ **Forward በማድረግ:**\n"
+        "   - ከአንድ ሰው ወይም ቻናል የተላከን መልዕክት ወደ እኔ `Forward` ያድርጉ።\n\n"
+        "2️⃣ **Reply በማድረግ:**\n"
+        "   - የማንኛውንም ሰው መልዕክት `Reply` አድርገው `/info` ብለው ይላኩ።\n\n"
+        "3️⃣ **/id ትዕዛዝ:**\n"
+        "   - የራስዎን ወይም የግሩፑን ID ለማወቅ `/id` ብለው ይላኩ።"
     )
     await update.message.reply_html(welcome_message)
 
@@ -117,6 +138,15 @@ async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if chat.id != user.id:
         message += f"💬 **የዚህ ግሩፕ/ቻናል ID:** `{chat.id}`"
     await update.message.reply_text(message, parse_mode=ParseMode.MARKDOWN_V2)
+
+async def info_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Reply የተደረገለት ተጠቃሚን መረጃ ያሳያል"""
+    if not update.message.reply_to_message:
+        await update.message.reply_text("እባክዎ ይህንን ትዕዛዝ ለመጠቀም የአንድን ሰው መልዕክት Reply ያድርጉ።")
+        return
+    
+    user_to_check = update.message.reply_to_message.from_user
+    await get_user_full_info(user_to_check, context.bot, update.message)
 
 async def forward_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     message = update.message
@@ -130,19 +160,8 @@ async def forward_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         await message.reply_text(response, parse_mode=ParseMode.MARKDOWN_V2)
     elif message.forward_from:
-        user = message.forward_from
-        age_estimation = estimate_account_age(user.id)
-        scam_analysis = await analyze_scam_potential(user, context.bot, user.id)
-        response = (
-            f"👤 **የተጠቃሚ መረጃ**\n\n"
-            f"**ስም:** {user.first_name} {user.last_name or ''}\n"
-            f"**Username:** @{user.username if user.username else 'የለውም'}\n"
-            f"**User ID:** `{user.id}`\n\n"
-            f"{age_estimation}\n\n"
-            f"---\n\n"
-            f"{scam_analysis}"
-        )
-        await message.reply_text(response, parse_mode=ParseMode.MARKDOWN_V2)
+        user_to_check = message.forward_from
+        await get_user_full_info(user_to_check, context.bot, message)
     elif message.forward_sender_name:
         sender_name = message.forward_sender_name
         response = (
@@ -156,25 +175,28 @@ async def forward_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 @app.route("/", methods=["POST"])
 async def process_update():
     """ቴሌግራም webhook ሲልክ ይህ ተግባር ይፈጸማል"""
-    
-    # የቦቱን አፕሊኬሽን መገንባት
     ptb_app = Application.builder().token(TOKEN).build()
     
     # ትዕዛዞችን መጨመር
     ptb_app.add_handler(CommandHandler("start", start_command))
     ptb_app.add_handler(CommandHandler("id", id_command))
+    ptb_app.add_handler(CommandHandler("info", info_command))
     ptb_app.add_handler(MessageHandler(filters.FORWARDED, forward_handler))
 
-    # ከቴሌግራም የመጣውን ዳታ ማስተናገድ
-    update_data = request.get_json(force=True)
-    update = Update.de_json(update_data, ptb_app.bot)
-    
-    async with ptb_app:
-        await ptb_app.initialize()
-        await ptb_app.process_update(update)
-        await ptb_app.shutdown()
+    try:
+        update_data = request.get_json(force=True)
+        update = Update.de_json(update_data, bot)
+        
+        async with ptb_app:
+            await ptb_app.initialize()
+            await ptb_app.process_update(update)
+            await ptb_app.shutdown()
+            
+    except Exception as e:
+        logger.error(f"An error occurred: {e}")
     
     return "OK", 200
 
 if __name__ == "__main__":
     app.run(debug=True)
+
