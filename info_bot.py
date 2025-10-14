@@ -2,15 +2,15 @@
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 #                                                               #
 #        ለ Vercel የተስተካከለ ሁለገብ መረጃ አግኚ ቦት (Info Bot)      #
-#                                                               #
+#                 V.2 - Initialization ስህተት የተስተካከለበት          #
 # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # # #
 import logging
 import os
+import asyncio
 from flask import Flask, request
 from telegram import Update, Bot
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, TypeHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 from telegram.constants import ParseMode
-import asyncio
 
 # ሎጊንግን ማዋቀር
 logging.basicConfig(
@@ -27,9 +27,10 @@ if not TOKEN:
 # Flask አፕሊኬሽኑን መፍጠር
 app = Flask(__name__)
 
-# --------------------------- ዋና ዋና ፊቸሮች (ከዚህ በፊት የነበሩት እንዳሉ ናቸው) ---------------------------
-# ... (estimate_account_age እና analyze_scam_potential ተግባራት እዚህ ጋር እንዳሉ አስብ)
+# --------------------------- ዋና ዋና ፊቸሮች ---------------------------
+
 def estimate_account_age(user_id: int) -> str:
+    """የአካውንት ዕድሜ ይገምታል"""
     known_ids = {
         100000000: "2015", 500000000: "2017", 1000000000: "2019",
         2000000000: "2021", 5000000000: "2022", 6000000000: "2023",
@@ -43,14 +44,13 @@ def estimate_account_age(user_id: int) -> str:
             break
     return f"📅 በግምት በ {year_created} ወይም ከዚያ በኋላ የተከፈተ።"
 
-def analyze_scam_potential(user: 'User', bot_instance: Bot, user_id: int) -> str:
+async def analyze_scam_potential(user: 'User', bot_instance: Bot, user_id: int) -> str:
+    """የማጭበርበር ስጋትን ይመረምራል"""
     warnings = []
     try:
-        # Note: bot.get_user_profile_photos is a coroutine, must be awaited
-        # This part won't work directly here synchronously. 
-        # For simplicity, we'll skip the profile photo check in this serverless version
-        # as it requires an async call within a sync function.
-        pass # To be improved with an async http client if needed
+        profile_photos = await bot_instance.get_user_profile_photos(user_id, limit=1)
+        if profile_photos.total_count == 0:
+            warnings.append("• 🖼️ ፕሮፋይል ፎቶ የለውም።")
     except Exception as e:
         logger.warning(f"Could not fetch profile photos for {user_id}: {e}")
 
@@ -67,6 +67,8 @@ def analyze_scam_potential(user: 'User', bot_instance: Bot, user_id: int) -> str
         return "✅ ምንም አጠራጣሪ ነገር አልተገኘም።"
     else:
         return "⚠️ **የደህንነት ትንታኔ:**\n" + "\n".join(warnings)
+
+# --------------------------- የቦት ትዕዛዝ እና ምላሾች ---------------------------
 
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
@@ -100,8 +102,7 @@ async def forward_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif message.forward_from:
         user = message.forward_from
         age_estimation = estimate_account_age(user.id)
-        # Note: Passing the bot instance to the scam analysis function.
-        scam_analysis = analyze_scam_potential(user, context.bot, user.id)
+        scam_analysis = await analyze_scam_potential(user, context.bot, user.id)
         response = (
             f"👤 **የተጠቃሚ መረጃ**\n\n"
             f"**ስም:** {user.first_name} {user.last_name or ''}\n"
@@ -118,26 +119,37 @@ async def forward_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"ይህ ተጠቃሚ (`{sender_name}`) አካውንታቸው `forward` ሲደረግ እንዳይታይ አድርገዋል።"
         )
         await message.reply_text(response, parse_mode=ParseMode.MARKDOWN_V2)
-# --------------------------------------------------------------------------
 
-# የቦቱን አፕሊኬሽን ማዋቀር
-ptb_app = Application.builder().token(TOKEN).build()
-ptb_app.add_handler(CommandHandler("start", start_command))
-ptb_app.add_handler(CommandHandler("id", id_command))
-ptb_app.add_handler(MessageHandler(filters.FORWARDED, forward_handler))
+# --------------------- ለ Vercel የተስተካከለው ክፍል ---------------------
+
+async def main_async():
+    """ይህ ተግባር አፕሊኬሽኑን ገንብቶ ለስራ ዝግጁ ያደርገዋል"""
+    ptb_app = Application.builder().token(TOKEN).build()
+    
+    # ትዕዛዞችን መጨመር
+    ptb_app.add_handler(CommandHandler("start", start_command))
+    ptb_app.add_handler(CommandHandler("id", id_command))
+    ptb_app.add_handler(MessageHandler(filters.FORWARDED, forward_handler))
+
+    return ptb_app
+
+# አፕሊኬሽኑን አንድ ጊዜ ብቻ መጀመር
+ptb_application = asyncio.run(main_async())
 
 @app.route("/", methods=["POST"])
-def process_update():
+async def process_update():
     """ቴሌግራም webhook ሲልክ ይህ ተግባር ይፈጸማል"""
     update_data = request.get_json(force=True)
-    update = Update.de_json(update_data, ptb_app.bot)
+    update = Update.de_json(update_data, ptb_application.bot)
     
-    # Updateውን ለ ptb_app ማስተናገጃ መስጠት
-    asyncio.run(ptb_app.process_update(update))
+    # አፕሊኬሽኑን initialize አድርጎ መልዕክቱን ማስተናገድ
+    async with ptb_application:
+        await ptb_application.initialize()
+        await ptb_application.process_update(update)
+        await ptb_application.shutdown()
     
     return "OK", 200
 
-# ይህንን መጨመር Vercel ላይ ሲሆን ቦቱ እንዲሰራ ያደርገዋል
+# Vercel ላይ ይህ ክፍል አይሰራም፤ ለ Local Test ብቻ ነው።
 if __name__ == "__main__":
-    # ይህ ክፍል Vercel ላይ አይሰራም፤ ለ Local Test ብቻ ነው።
     app.run(debug=True)
